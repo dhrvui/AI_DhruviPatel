@@ -1,0 +1,67 @@
+# --------------------------
+# IMPORTS
+# --------------------------
+from pptx import Presentation
+from manim import *
+import os
+
+# --------------------------
+# CONFIGURATION
+# --------------------------
+PPTX_FILE = "Artificial Intelligence_slides.pptx"  # Replace with your generated pptx
+VIDEO_OUTPUT = "AI_Lecture.mp4"
+
+# --------------------------
+# READ PPTX SLIDES
+# --------------------------
+def read_pptx_slides(pptx_file):
+    prs = Presentation(pptx_file)
+    slides_text = []
+    for slide in prs.slides:
+        text = ""
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                text += shape.text + "\n"
+        slides_text.append(text.strip())
+    return slides_text
+
+# --------------------------
+# CREATE MANIM SCENE
+# --------------------------
+class SlideScene(Scene):
+    def construct(self):
+        slides_text = self.slides_text  # Injected dynamically
+        for slide_text in slides_text:
+            # Split into lines for animation
+            lines = slide_text.split("\n")
+            for i, line in enumerate(lines):
+                txt = Text(line, font_size=36).to_edge(UP).shift(DOWN*i*0.6)
+                self.play(Write(txt), run_time=1.5)
+            self.wait(2)
+            self.clear()  # Clear before next slide
+
+# --------------------------
+# RENDER VIDEO
+# --------------------------
+def create_manim_video(slides_text, output_file):
+    # Dynamically inject slides text into scene
+    SlideScene.slides_text = slides_text
+
+    # Render video
+    from manim import config
+    config.media_width = "100%"
+    config.pixel_height = 720
+    config.pixel_width = 1280
+    config.frame_rate = 30
+
+    scene = SlideScene()
+    scene.render(output_file=output_file, format="mp4")
+
+# --------------------------
+# MAIN
+# --------------------------
+if __name__ == "__main__":
+    slides_text = read_pptx_slides(PPTX_FILE)
+    print(f"[+] {len(slides_text)} slides extracted from PPTX.")
+    create_manim_video(slides_text, VIDEO_OUTPUT)
+    print(f"[+] Video saved as {VIDEO_OUTPUT}")
