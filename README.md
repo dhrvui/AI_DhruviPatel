@@ -1,5 +1,7 @@
 # AI_DhruviPatel
 AI-Powered Knowledge Graph to Manim Animation Automation
+
+
 Overview
 
 This project automates the creation of animated educational videos using AI and Manim. It generates slides and teaching scripts from a knowledge graph of books and converts them into animated videos.
