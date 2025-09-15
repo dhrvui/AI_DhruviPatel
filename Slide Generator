@@ -1,0 +1,142 @@
+# --------------------------
+# IMPORTS
+# --------------------------
+import os
+from pathlib import Path
+from tqdm import tqdm
+from neo4j import GraphDatabase
+from pptx import Presentation
+import spacy
+import yake
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+# --------------------------
+# CONFIGURATION
+# --------------------------
+NEO4J_URI = "bolt://127.0.0.1:7687"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = "neo4jpass"
+
+MODEL_NAME = "mosaicml/mpt-7b-instruct"
+CHUNK_SIZE = 1000  # Approx tokens per chunk
+
+# --------------------------
+# NEO4J CONNECTION
+# --------------------------
+driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+
+def get_passages_for_concept(concept_name):
+    query = """
+    MATCH (p:Passage)-[:MENTIONS]->(c:Concept {name:$concept_name})
+    RETURN p.text AS passage
+    """
+    with driver.session() as session:
+        results = session.run(query, concept_name=concept_name)
+        return [record["passage"] for record in results]
+
+# --------------------------
+# LOAD MPT MODEL (OPTIMIZED)
+# --------------------------
+print("[*] Loading MPT model. This may take a while...")
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+dtype = torch.float16 if device=="cuda" else torch.bfloat16
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    device_map="auto" if device=="cuda" else None,
+    torch_dtype=dtype
+)
+
+generator = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    device=0 if device=="cuda" else -1
+)
+
+# --------------------------
+# HELPER: SPLIT TEXT INTO CHUNKS
+# --------------------------
+def split_text_into_chunks(text, chunk_size=CHUNK_SIZE):
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size):
+        chunks.append(" ".join(words[i:i+chunk_size]))
+    return chunks
+
+# --------------------------
+# SCRIPT GENERATION
+# --------------------------
+def generate_script_mpt(concept_name, passages):
+    all_chunks = []
+    for p in passages:
+        chunks = split_text_into_chunks(p)
+        all_chunks.extend(chunks)
+
+    final_script = ""
+    for i, chunk in enumerate(tqdm(all_chunks, desc="Generating script chunks")):
+        prompt = f"""
+You are an educational content creator.
+Create a detailed teaching script for the concept '{concept_name}' based on the following passage:
+
+{chunk}
+
+Format it in short paragraphs suitable for slides.
+"""
+        output = generator(prompt, max_new_tokens=400)  # Use max_new_tokens instead of max_length
+        final_script += output[0]['generated_text'].strip() + "\n\n"
+    return final_script
+
+# --------------------------
+# SPLIT SCRIPT INTO SLIDES
+# --------------------------
+def split_script_to_slides(script_text, max_sentences=5):
+    sentences = [s.strip() for s in script_text.replace("\n", " ").split(". ") if s]
+    slides = []
+    for i in range(0, len(sentences), max_sentences):
+        slides.append(". ".join(sentences[i:i+max_sentences]))
+    return slides
+
+# --------------------------
+# CREATE POWERPOINT SLIDES
+# --------------------------
+def create_pptx(concept_name, slides):
+    prs = Presentation()
+    for slide_text in slides:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = concept_name
+        slide.placeholders[1].text = slide_text
+    file_name = f"{concept_name}_slides.pptx"
+    prs.save(file_name)
+    print(f"[+] PowerPoint saved: {file_name}")
+    return file_name
+
+# --------------------------
+# FULL AUTOMATION FUNCTION
+# --------------------------
+def generate_slides_from_concept(concept_name):
+    print(f"[*] Retrieving passages for concept: {concept_name}")
+    passages = get_passages_for_concept(concept_name)
+    if not passages:
+        print(f"[!] No passages found for concept '{concept_name}'")
+        return
+
+    print("[*] Generating teaching script with MPT...")
+    script_text = generate_script_mpt(concept_name, passages)
+
+    print("[*] Splitting script into slides...")
+    slides = split_script_to_slides(script_text)
+
+    print("[*] Creating PowerPoint presentation...")
+    pptx_file = create_pptx(concept_name, slides)
+    return pptx_file
+
+# --------------------------
+# RUN EXAMPLE
+# --------------------------
+if __name__ == "__main__":
+    concept = "Artificial Intelligence"
+    generate_slides_from_concept(concept)
